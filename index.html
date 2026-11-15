@@ -24,9 +24,9 @@ button.g{background:#e2e8f0;color:var(--t)}button.d{background:#fee2e2;color:var
 .t{position:fixed;bottom:96px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:10px 18px;border-radius:12px;z-index:20;max-width:90%}
 table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:8px 4px;border-bottom:1px solid #eee;text-align:left}
 </style></head><body><div id="app"></div>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
+window.onerror = (m) => document.body.insertAdjacentHTML("afterbegin", "<pre style='color:#b91c1c;background:#fee2e2;padding:12px;white-space:pre-wrap'>Error: " + m + "</pre>");
+window.onunhandledrejection = (e) => window.onerror(String((e.reason && e.reason.message) || e.reason));
 /* ===== PENGATURAN ===== */
 const ADMIN_PIN = "admin123";   // PIN Admin utama. GANTI!
 const JAM_MASUK = "09:00";      // lewat jam ini = Terlambat
@@ -38,17 +38,36 @@ const FIREBASE_CONFIG = {
   messagingSenderId: "292872036750",
   appId: "1:292872036750:web:9acfb25b7eb422adf804df"
 };
-firebase.initializeApp(FIREBASE_CONFIG);
-const fs = firebase.firestore();
+const DATABASE_ID = "default";   // nama database Firestore (lihat di Firebase Console, bagian atas Firestore)
+const BASE = `projects/${FIREBASE_CONFIG.projectId}/databases/${DATABASE_ID}/documents`;
+const API = "https://firestore.googleapis.com/v1/" + BASE, KEY = "key=" + FIREBASE_CONFIG.apiKey;
+const JH = { "Content-Type": "application/json" };
+const tmo = (p, ms) => Promise.race([p, new Promise((_, r) => setTimeout(() => r("Koneksi ke database terlalu lama. Cek internet, matikan pemblokir iklan, atau cek Rules Firestore."), ms))]);
+async function fx(url, opt) {
+  const r = await fetch(url, opt), j = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error((j.error && j.error.message) || "HTTP " + r.status); e.code = r.status == 403 ? "permission-denied" : r.status == 409 ? "ada" : r.status == 404 ? "not-found" : r.status; throw e; }
+  return j;
+}
+const enc = o => { const f = {}; for (const k in o) { const v = o[k]; f[k] = typeof v == "number" ? { integerValue: String(Math.round(v)) } : { stringValue: String(v ?? "") }; } return f; };
+const dec = d => {
+  const o = { id: d.name.split("/").pop() };
+  for (const k in d.fields || {}) { const v = d.fields[k]; o[k] = v.stringValue !== undefined ? v.stringValue : v.integerValue !== undefined ? +v.integerValue : v.doubleValue !== undefined ? v.doubleValue : v.timestampValue ? Date.parse(v.timestampValue) : null; }
+  if (!o.ts) o.ts = Date.parse(d.createTime); return o;
+};
 const DB = {
-  async list(c) { const s = await fs.collection(c).get(); return s.docs.map(d => { const o = d.data(); return { ...o, id: d.id, ts: o.ts && o.ts.toMillis ? o.ts.toMillis() : Date.now() }; }); },
-  async add(c, o, id) {
-    const r = id ? fs.collection(c).doc(id) : fs.collection(c).doc();
-    if (id && (await r.get()).exists) throw "ada";
-    await r.set({ ...o, ts: firebase.firestore.FieldValue.serverTimestamp() });
+  async list(c) {
+    let out = [], t = "";
+    do { const j = await fx(`${API}/${c}?pageSize=100&${KEY}${t ? "&pageToken=" + encodeURIComponent(t) : ""}`); out = out.concat((j.documents || []).map(dec)); t = j.nextPageToken || ""; } while (t);
+    return out;
   },
-  upd: (c, id, o) => fs.collection(c).doc(id).update(o),
-  del: (c, id) => fs.collection(c).doc(id).delete()
+  async add(c, o, id) {
+    id = id || crypto.randomUUID().replace(/-/g, "");
+    const w = { update: { name: `${BASE}/${c}/${id}`, fields: enc(o) }, currentDocument: { exists: false }, updateTransforms: [{ fieldPath: "ts", setToServerValue: "REQUEST_TIME" }] };
+    try { await fx(`${API}:commit?${KEY}`, { method: "POST", headers: JH, body: JSON.stringify({ writes: [w] }) }); }
+    catch (e) { if (e.code == "ada" || /already exists/i.test(e.message)) throw "ada"; throw e; }
+  },
+  upd: (c, id, o) => fx(`${API}/${c}/${id}?${Object.keys(o).map(k => "updateMask.fieldPaths=" + k).join("&")}&${KEY}`, { method: "PATCH", headers: JH, body: JSON.stringify({ fields: enc(o) }) }),
+  del: (c, id) => fx(`${API}/${c}/${id}?${KEY}`, { method: "DELETE" })
 };
 
 const $ = s => document.querySelector(s);
@@ -65,16 +84,18 @@ const interns = () => S.D.users.filter(u => u.role == "intern");
 
 async function go(t) {
   if (t) S.tab = t;
-  try { for (const c in S.D) S.D[c] = await DB.list(c); }
-  catch (e) { toast("Gagal terhubung ke database. Cek config & Rules Firebase."); console.error(e); }
+  S.err = "";
+  try { for (const c in S.D) S.D[c] = await tmo(DB.list(c), 12000); }
+  catch (e) { S.err = (e && e.code == "permission-denied" ? "Rules Firestore belum di-Publish. " : e && e.code == "not-found" ? "Database tidak ditemukan, cek DATABASE_ID. " : "") + String((e && e.message) || e); console.error(e); }
   draw();
 }
+const banner = () => S.err ? `<div class=c><div class=w>⚠️ ${esc(S.err)}</div><button onclick="go()">Coba lagi</button></div>` : "";
 function draw() {
-  if (!S.u) { $("#app").innerHTML = loginHTML(); return; }
+  if (!S.u) { $("#app").innerHTML = banner() + loginHTML(); return; }
   const tabs = isA() ? [["dash", "🏠", "Beranda"], ["abs", "🕘", "Absensi"], ["proj", "📋", "Proyek"], ["jad", "📅", "Jadwal"]].concat(isOwner() ? [["usr", "👥", "Peserta"]] : [])
     : [["absen", "🕘", "Absen"], ["proj", "📋", "Proyek"], ["jad", "📅", "Jadwal"]];
   if (!tabs.find(t => t[0] == S.tab)) S.tab = tabs[0][0];
-  $("#app").innerHTML = `<header><span>👋 <b>${esc(S.u.name)}</b> <span class=s style="color:#94a3b8">${isOwner() ? "Admin" : isA() ? "Mentor" : "Magang"}</span></span><button onclick="logout()">Keluar</button></header>
+  $("#app").innerHTML = banner() + `<header><span>👋 <b>${esc(S.u.name)}</b> <span class=s style="color:#94a3b8">${isOwner() ? "Admin" : isA() ? "Mentor" : "Magang"}</span></span><button onclick="logout()">Keluar</button></header>
   <main>${V[S.tab]()}</main><div class=bn>${tabs.map(t => `<button class="${t[0] == S.tab ? "on" : ""}" onclick="go('${t[0]}')"><b>${t[1]}</b>${t[2]}</button>`).join("")}</div>`;
 }
 function logout() { sessionStorage.clear(); S.u = null; draw(); }
@@ -113,7 +134,7 @@ function cam(type) {
     x.fillStyle = "rgba(0,0,0,.6)"; x.fillRect(0, c.height - 18, c.width, 18); x.fillStyle = "#fff"; x.font = "12px sans-serif";
     x.fillText(S.u.name + " • " + dt(now) + " " + tm(now), 4, c.height - 5);
     try { await DB.add("attendance", { uid: S.u.id, name: S.u.name, type, day, photo: c.toDataURL("image/jpeg", .6) }, S.u.id + "_" + day + "_" + type); toast("Absen berhasil ✅"); }
-    catch (e) { toast("Anda sudah absen " + (type == "in" ? "masuk" : "pulang") + " hari ini"); }
+    catch (e) { toast(e == "ada" ? "Anda sudah absen " + (type == "in" ? "masuk" : "pulang") + " hari ini" : "Gagal menyimpan: " + ((e && e.message) || e)); }
     stop(); go();
   };
 }
@@ -184,5 +205,6 @@ V.jad = () => {
 };
 async function addJ() { if (!val("jt") || !val("jd")) return toast("Isi judul & tanggal"); await DB.add("schedules", { kind: val("jk"), title: val("jt"), date: val("jd"), time: val("jm"), who: val("jw"), note: val("jn") }); toast("Jadwal disimpan"); go(); }
 
+$("#app").innerHTML = "<main><p class=s>Memuat…</p></main>";
 go();
 </script></body></html>
