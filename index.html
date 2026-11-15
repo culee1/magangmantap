@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Monitoring Anak Magang</title>
+<style>
+*{box-sizing:border-box}body{font:15px system-ui,sans-serif;margin:0;background:#f3f4f6;color:#111}#app{max-width:760px;margin:auto;padding:10px}
+.c{background:#fff;border-radius:12px;padding:14px;margin:10px 0;box-shadow:0 1px 3px #0002}
+input,textarea,select,button{width:100%;padding:10px;margin:4px 0;border:1px solid #ccc;border-radius:8px;font:inherit}
+button{background:#2563eb;color:#fff;border:0;cursor:pointer}button:disabled{background:#9ca3af}button.g{background:#e5e7eb;color:#111}button.d{background:#dc2626;width:auto;padding:4px 10px}
+nav{display:flex;gap:6px;overflow:auto}nav button{width:auto;white-space:nowrap}nav .on{background:#111}
+.bar{height:8px;background:#e5e7eb;border-radius:4px}.bar i{display:block;height:100%;background:#16a34a;border-radius:4px}
+.r2{display:flex;gap:10px;align-items:center;margin:8px 0}.r2 img{width:72px;border-radius:8px}
+.r{color:#dc2626}.s{color:#6b7280;font-size:12px}.w{background:#fef3c7;padding:8px;border-radius:8px}
+.m{position:fixed;inset:0;background:#000a;display:flex;align-items:center;padding:10px}.m .c{width:100%;max-width:420px;margin:auto}video{width:100%;border-radius:8px;transform:scaleX(-1)}
+table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px solid #eee;text-align:left}
+</style></head><body><div id="app"></div>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+/* ===== PENGATURAN (edit di sini) ===== */
+const ADMIN_PIN = "admin123";   // PIN login admin/mentor (nama: admin). GANTI!
+const JAM_MASUK = "09:00";      // lewat jam ini = Terlambat
+const FIREBASE_CONFIG = null;   // tempel config Firebase, contoh: {apiKey:"...",authDomain:"...",projectId:"..."}
+/* Aturan Firestore yang disarankan (absensi tidak bisa diubah/dihapus):
+rules_version='2'; service cloud.firestore { match /databases/{d}/documents {
+ match /attendance/{id} { allow read, create: if true; allow update, delete: if false; }
+ match /users/{id} { allow read, write: if true; } match /projects/{id} { allow read, write: if true; }
+ match /reports/{id} { allow read, write: if true; } match /schedules/{id} { allow read, write: if true; } } } */
+
+let fs = null;
+if (FIREBASE_CONFIG) { firebase.initializeApp(FIREBASE_CONFIG); fs = firebase.firestore(); }
+const LS = k => JSON.parse(localStorage.getItem(k) || "[]");
+const DB = {
+  async list(c) {
+    if (fs) { const s = await fs.collection(c).get(); return s.docs.map(d => { const o = d.data(); return { ...o, id: d.id, ts: o.ts && o.ts.toMillis ? o.ts.toMillis() : Date.now() }; }); }
+    return LS(c);
+  },
+  async add(c, o, id) {
+    if (fs) { const r = id ? fs.collection(c).doc(id) : fs.collection(c).doc(); if (id && (await r.get()).exists) throw "ada"; await r.set({ ...o, ts: firebase.firestore.FieldValue.serverTimestamp() }); return; }
+    const a = LS(c); id = id || Date.now() + Math.random().toString(36).slice(2, 6);
+    if (a.find(x => x.id == id)) throw "ada";
+    a.push({ ...o, id, ts: Date.now() }); localStorage.setItem(c, JSON.stringify(a));
+  },
+  async upd(c, id, o) {
+    if (fs) return fs.collection(c).doc(id).update(o);
+    const a = LS(c); Object.assign(a.find(x => x.id == id), o); localStorage.setItem(c, JSON.stringify(a));
+  },
+  async del(c, id) {
+    if (fs) return fs.collection(c).doc(id).delete();
+    localStorage.setItem(c, JSON.stringify(LS(c).filter(x => x.id != id)));
+  }
+};
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const dk = ms => new Date(ms).toLocaleDateString("sv-SE");
+const tm = ms => new Date(ms).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+const dt = ms => new Date(ms).toLocaleDateString("id-ID", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+let S = { u: JSON.parse(sessionStorage.u || "null"), tab: "absen", D: {} };
+const nm = id => (S.D.users.find(u => u.id == id) || {}).name || id;
+const val = id => $("#" + id).value.trim();
+
+async function load() { for (const c of ["users", "projects", "reports", "schedules", "attendance"]) S.D[c] = await DB.list(c); }
+async function go(t) { if (t) S.tab = t; await load(); draw(); }
+
+function draw() {
+  if (!S.u) { $("#app").innerHTML = loginHTML(); return; }
+  const adm = S.u.role == "admin";
+  const tabs = adm ? [["dash", "Dashboard"], ["abs", "Absensi"], ["proj", "Proyek"], ["jad", "Jadwal"]] : [["absen", "Absen"], ["proj", "Proyek"], ["jad", "Jadwal"]];
+  if (!tabs.find(t => t[0] == S.tab)) S.tab = tabs[0][0];
+  $("#app").innerHTML = `<div class=c><b>${esc(S.u.name)}</b> (${adm ? "Admin" : "Peserta magang"}) <button class=g style="width:auto;float:right;padding:4px 10px" onclick="logout()">Keluar</button></div>
+  <nav>${tabs.map(t => `<button class="${t[0] == S.tab ? "on" : ""}" onclick="go('${t[0]}')">${t[1]}</button>`).join("")}</nav>${V[S.tab]()}`;
+}
+function logout() { sessionStorage.clear(); S.u = null; draw(); }
+
+function loginHTML() {
+  return `<div class=c><h2>Monitoring Anak Magang</h2>${fs ? "" : "<p class=w>Mode demo: data hanya tersimpan di browser ini. Isi FIREBASE_CONFIG agar data online & waktu dari server.</p>"}
+  <input id=n placeholder="Nama lengkap"><input id=p type=password placeholder="PIN"><button onclick="login(0)">Masuk</button><button class=g onclick="login(1)">Daftar sebagai peserta magang</button><p class=s>Admin: nama "admin" + PIN admin.</p></div>`;
+}
+async function login(reg) {
+  const n = val("n"), p = $("#p").value; if (!n || !p) return alert("Isi nama & PIN");
+  await load(); const id = n.toLowerCase().replace(/\s+/g, "_");
+  if (n.toLowerCase() == "admin") { if (p != ADMIN_PIN) return alert("PIN salah"); S.u = { id: "admin", name: "Admin", role: "admin" }; }
+  else if (reg) { try { await DB.add("users", { name: n, pin: p, role: "intern" }, id); } catch (e) { return alert("Nama sudah terdaftar"); } S.u = { id, name: n, role: "intern" }; }
+  else { const u = S.D.users.find(x => x.id == id && x.pin == p); if (!u) return alert("Nama / PIN salah"); S.u = { id, name: u.name, role: "intern" }; }
+  sessionStorage.u = JSON.stringify(S.u); go(S.u.role == "admin" ? "dash" : "absen");
+}
+
+/* ===== Absensi ===== */
+const att = (uid, day, type) => S.D.attendance.find(a => a.uid == uid && a.day == day && a.type == type);
+const late = a => a.type == "in" && tm(a.ts) > JAM_MASUK ? "<b class=r>Terlambat</b>" : "";
+const rowA = a => `<div class=r2><img src="${a.photo}"><div>${esc(a.name)}<br>${a.type == "in" ? "Masuk" : "Pulang"} • ${dt(a.ts)} ${tm(a.ts)} ${late(a)}</div></div>`;
+
+function cam(type) {
+  const m = document.createElement("div"); m.className = "m";
+  m.innerHTML = `<div class=c><video autoplay playsinline muted></video><button id=sn>📸 Ambil foto &amp; ${type == "in" ? "Absen Masuk" : "Absen Pulang"}</button><button class=g id=cl>Batal</button></div>`;
+  document.body.append(m); const v = m.querySelector("video"); let st;
+  const stop = () => { st && st.getTracks().forEach(t => t.stop()); m.remove(); };
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } }).then(s => { st = s; v.srcObject = s; }).catch(() => { alert("Kamera tidak bisa diakses. Izinkan akses kamera."); stop(); });
+  m.querySelector("#cl").onclick = stop;
+  m.querySelector("#sn").onclick = async () => {
+    if (!v.videoWidth) return;
+    const now = Date.now(), day = dk(now);
+    if (type == "out" && !att(S.u.id, day, "in")) { alert("Absen masuk dulu"); return; }
+    const c = document.createElement("canvas"); c.width = 320; c.height = Math.round(320 * v.videoHeight / v.videoWidth);
+    const x = c.getContext("2d"); x.drawImage(v, 0, 0, c.width, c.height);
+    x.fillStyle = "rgba(0,0,0,.6)"; x.fillRect(0, c.height - 18, c.width, 18); x.fillStyle = "#fff"; x.font = "12px sans-serif";
+    x.fillText(S.u.name + " • " + dt(now) + " " + tm(now), 4, c.height - 5);
+    try { await DB.add("attendance", { uid: S.u.id, name: S.u.name, type, day, photo: c.toDataURL("image/jpeg", .6) }, S.u.id + "_" + day + "_" + type); }
+    catch (e) { alert("Anda sudah absen " + (type == "in" ? "masuk" : "pulang") + " hari ini"); }
+    stop(); go();
+  };
+}
+
+const V = {};
+V.absen = () => {
+  const d = dk(Date.now()), i = att(S.u.id, d, "in"), o = att(S.u.id, d, "out");
+  const mine = S.D.attendance.filter(a => a.uid == S.u.id).sort((a, b) => b.ts - a.ts);
+  const today = S.D.schedules.filter(s => s.date == d && (s.who == "all" || s.who == S.u.id));
+  return `<div class=c><h3>${dt(Date.now())}</h3><p>Masuk: ${i ? tm(i.ts) + " " + late(i) : "-"} | Pulang: ${o ? tm(o.ts) : "-"}</p>
+  <button ${i ? "disabled" : ""} onclick="cam('in')">Absen Masuk</button><button ${!i || o ? "disabled" : ""} onclick="cam('out')">Absen Pulang</button>
+  <p class=s>Foto wajah wajib. Tanggal & jam dicatat otomatis dan tidak bisa diubah (batas masuk ${JAM_MASUK}).</p></div>
+  ${today.length ? `<div class=c><h3>Agenda hari ini</h3>${today.map(rowJ).join("")}</div>` : ""}
+  <div class=c><h3>Riwayat absensi</h3>${mine.map(rowA).join("") || "Belum ada"}</div>`;
+};
+V.abs = () => {
+  const d = window.fd || dk(Date.now()), L = S.D.attendance.filter(a => a.day == d).sort((a, b) => a.ts - b.ts);
+  return `<div class=c><h3>Absensi</h3><input type=date value="${d}" onchange="window.fd=this.value;draw()">${L.map(rowA).join("") || "Tidak ada data"}</div>`;
+};
+V.dash = () => {
+  const d = dk(Date.now());
+  return `<div class=c><h3>Hari ini • ${dt(Date.now())}</h3><div style="overflow:auto"><table><tr><th>Peserta</th><th>Masuk</th><th>Pulang</th><th>Progres</th></tr>
+  ${S.D.users.map(u => { const i = att(u.id, d, "in"), o = att(u.id, d, "out"), ps = S.D.projects.filter(p => p.who == "all" || p.who == u.id), av = ps.length ? Math.round(ps.reduce((s, p) => s + (+p.progress || 0), 0) / ps.length) : 0;
+    return `<tr><td>${esc(u.name)}</td><td>${i ? tm(i.ts) + " " + late(i) : "<span class=r>Belum</span>"}</td><td>${o ? tm(o.ts) : "-"}</td><td>${av}%</td></tr>`; }).join("") || "<tr><td>Belum ada peserta</td></tr>"}</table></div></div>`;
+};
+
+/* ===== Proyek ===== */
+V.proj = () => {
+  const adm = S.u.role == "admin";
+  const list = S.D.projects.filter(p => adm || p.who == "all" || p.who == S.u.id);
+  return (adm ? `<div class=c><h3>Proyek baru</h3><input id=pt placeholder="Judul proyek"><textarea id=pd placeholder="Deskripsi / tugas"></textarea>
+  <select id=pw><option value=all>Semua peserta</option>${S.D.users.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join("")}</select>
+  <input id=pl type=date><button onclick="addP()">Simpan proyek</button></div>` : "") +
+  list.map(p => { const rs = S.D.reports.filter(r => r.pid == p.id).sort((a, b) => b.ts - a.ts);
+    return `<div class=c><h3>${esc(p.title)} ${adm ? `<button class=d onclick="del('projects','${p.id}')">Hapus</button>` : ""}</h3><p>${esc(p.desc)}</p>
+    <p class=s>Untuk: ${p.who == "all" ? "Semua" : esc(nm(p.who))} • Deadline: ${p.due || "-"}</p>
+    <div class=bar><i style="width:${p.progress || 0}%"></i></div><b>${p.progress || 0}%</b>
+    <input type=range min=0 max=100 step=5 value="${p.progress || 0}" onchange="setP('${p.id}',this.value)">
+    ${adm ? "" : `<textarea id="r${p.id}" placeholder="Tulis laporan progres hari ini"></textarea><button onclick="addR('${p.id}')">Kirim laporan</button>`}
+    <h4>Laporan</h4>${rs.filter(r => adm || r.uid == S.u.id).map(r => `<p class=s><b>${esc(r.name)}</b> • ${dt(r.ts)}<br>${esc(r.text)}</p>`).join("") || "<p class=s>Belum ada</p>"}</div>`; }).join("");
+};
+async function addP() { if (!val("pt")) return alert("Isi judul"); await DB.add("projects", { title: val("pt"), desc: val("pd"), who: val("pw"), due: val("pl"), progress: 0 }); go(); }
+async function setP(id, v) { await DB.upd("projects", id, { progress: +v }); go(); }
+async function addR(pid) { const t = val("r" + pid); if (!t) return alert("Isi laporan"); await DB.add("reports", { pid, uid: S.u.id, name: S.u.name, text: t }); go(); }
+async function del(c, id) { if (confirm("Hapus?")) { await DB.del(c, id); go(); } }
+
+/* ===== Jadwal ===== */
+const rowJ = s => `<p><b>${s.kind == "meeting" ? "📅 Meeting" : "🏢 Ke kantor"}</b>: ${esc(s.title)}<br><span class=s>${dt(new Date(s.date + "T00:00").getTime())} ${s.time || ""} • ${s.who == "all" ? "Semua" : esc(nm(s.who))} ${esc(s.note || "")}</span>
+${S.u.role == "admin" ? `<button class=d onclick="del('schedules','${s.id}')">Hapus</button>` : ""}</p>`;
+V.jad = () => {
+  const adm = S.u.role == "admin";
+  const L = S.D.schedules.filter(s => adm || s.who == "all" || s.who == S.u.id).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+  return (adm ? `<div class=c><h3>Tambah jadwal</h3><select id=jk><option value=meeting>Meeting</option><option value=kantor>Jadwal datang ke kantor</option></select>
+  <input id=jt placeholder="Judul / keterangan"><input id=jd type=date><input id=jm type=time>
+  <select id=jw><option value=all>Semua peserta</option>${S.D.users.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join("")}</select>
+  <input id=jn placeholder="Catatan / link meeting (opsional)"><button onclick="addJ()">Simpan jadwal</button></div>` : "") +
+  `<div class=c><h3>Jadwal</h3>${L.map(rowJ).join("") || "Belum ada jadwal"}</div>`;
+};
+async function addJ() { if (!val("jt") || !val("jd")) return alert("Isi judul & tanggal"); await DB.add("schedules", { kind: val("jk"), title: val("jt"), date: val("jd"), time: val("jm"), who: val("jw"), note: val("jn") }); go(); }
+
+go();
+</script></body></html>
