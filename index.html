@@ -16,34 +16,18 @@ table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px so
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
-
- <script type="module">
-  // Import the functions you need from the SDKs you need
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/13.3.0/firebase-app.js";
-  import { getAnalytics } from "https://www.gstatic.com/firebasejs/13.3.0/firebase-analytics.js";
-  // TODO: Add SDKs for Firebase products that you want to use
-  // https://firebase.google.com/docs/web/setup#available-libraries
-
-  // Your web app's Firebase configuration
-  // For Firebase JS SDK v7.20.0 and later, measurementId is optional
-  const firebaseConfig = {
-    apiKey: "AIzaSyBiH_oPQxsjMVHRSVHrYbB3D06bNY8-bP8",
-    authDomain: "magang-d3294.firebaseapp.com",
-    projectId: "magang-d3294",
-    storageBucket: "magang-d3294.firebasestorage.app",
-    messagingSenderId: "292872036750",
-    appId: "1:292872036750:web:9acfb25b7eb422adf804df",
-    measurementId: "G-02X6KTTQ6T"
-  };
-
-  // Initialize Firebase
-  const app = initializeApp(firebaseConfig);
-  const analytics = getAnalytics(app);
-</script>
 /* ===== PENGATURAN (edit di sini) ===== */
 const ADMIN_PIN = "admin123";   // PIN login admin/mentor (nama: admin). GANTI!
 const JAM_MASUK = "09:00";      // lewat jam ini = Terlambat
-const FIREBASE_CONFIG = null;   // tempel config Firebase, contoh: {apiKey:"...",authDomain:"...",projectId:"..."}
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBiH_oPQxsjMVHRSVHrYbB3D06bNY8-bP8",
+  authDomain: "magang-d3294.firebaseapp.com",
+  projectId: "magang-d3294",
+  storageBucket: "magang-d3294.firebasestorage.app",
+  messagingSenderId: "292872036750",
+  appId: "1:292872036750:web:9acfb25b7eb422adf804df",
+  measurementId: "G-02X6KTTQ6T"
+};
 /* Aturan Firestore yang disarankan (absensi tidak bisa diubah/dihapus):
 rules_version='2'; service cloud.firestore { match /databases/{d}/documents {
  match /attendance/{id} { allow read, create: if true; allow update, delete: if false; }
